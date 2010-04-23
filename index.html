@@ -1,0 +1,323 @@
+<!--
+	Random IPad stickies using local storage
+	Fun with gesture based resizing and dragging
+	Double click to edit
+	:P
+
+	-jianshen
+-->
+<!doctype html>
+<html>
+<head>
+	<meta name="viewport" content="width=device-width; initial-scale=1.0; maximum-scale=1.0; user-scalable=0;">
+	<title>BOOM LIST</title>
+<script src="http://www.google.com/jsapi"></script>
+<script type="text/javascript">
+google.load('jquery','1');
+google.load('jqueryui','1');
+
+google.setOnLoadCallback(function() {
+	$(window).resize(resize);
+	resize();
+
+	$('#add').click(TodoMgr.add);
+	$('body').bind('touchmove', cancelTouch);
+	TodoMgr.load();
+});
+
+var TodoMgr = function() {
+	var todos = {};
+	
+	function addTodo() {
+		var note = prompt("What's on your mind?","Chicken and Waffles");
+		if(note) {
+			var todo = new Todo(note);
+			todos[todo.id] = todo;
+			TodoMgr.save();
+		}		
+	}
+	
+	function load() {
+		var len = localStorage.length;
+		for(var i=0; i<len; i++) {
+			var key = localStorage.key(i);
+			var data = localStorage.getItem(key);
+			var obj = JSON.parse(data);
+			var todo = new Todo(obj.note, obj.id, obj.x, obj.y, obj.w, obj.h);
+			todos[todo.id] = todo;
+		}
+	}
+	
+	function save() {
+		localStorage.clear();
+		for(var id in todos) {
+			localStorage.setItem(id,JSON.stringify(todos[id].serialize()));
+		}
+	}
+	
+	return {
+		add: addTodo,
+		load: load,
+		save: save
+	};
+}();
+
+
+function Todo(note, id, x, y, w, h) {
+	if(typeof Todo.lastId == 'undefined') {
+		Todo.lastId = 0;
+	}
+	
+	if(typeof id == 'undefined') {
+		id = Todo.lastId++;
+	} else {
+		Todo.lastId = Number(id)+1;
+	}
+	
+	this.id = id;
+	this.note = note;
+	this.x = x || 0;
+	this.y = y || 0;
+	this.w = w || 100;
+	this.h = h || 100;
+	
+	this.elem = $('<div class="todo" id="todo_' + this.id + '"><div class="text">' + note + '</div></div>')
+		.appendTo('#list')
+		.bind('click', {todo:this}, this.rename)
+		.bind('touchstart', {todo:this}, this.touchstart)
+		.bind('touchend', {todo:this}, this.touchend)
+		.bind('touchmove', {todo:this}, this.touchmove)
+		.bind('gesturestart', {todo:this}, this.gesturestart)
+		.bind('gesturechange', {todo:this}, this.gesturechange)
+		.bind('gestureend', {todo:this}, this.gestureend)
+		.offset({top: this.y, left: this.x})
+		.width(this.w)
+		.height(this.h);
+}
+
+Todo.prototype.serialize = function() {
+	return {
+		id: this.id,
+		note: this.note,
+		x: this.x,
+		y: this.y,
+		w: this.w,
+		h: this.h
+	};
+}
+
+Todo.prototype.position = function(pos, animate) {
+	if(pos.x) {
+		this.x = pos.x;
+	}
+	if(pos.y) {
+		this.y = pos.y;
+	}
+	if(animate) {
+		var todo = this;
+		this.elem.animate({left: pos.x, top: pos.y}, 500, 'easeOutElastic', function() {
+			//console.log(todo.note);
+			todo.x = pos.x;
+			todo.y = pos.y;
+		});
+	} else {
+		this.elem.offset({
+			left: this.x,
+			top: this.y
+		});
+	}
+	if(pos.w) {
+		pos.w = Math.max(100,Math.min(pos.w,300));
+		this.elem.width(pos.w);
+		this.w = pos.w;
+	}	
+	if(pos.h) {
+		pos.h = Math.max(100,Math.min(pos.h,300));
+		this.elem.height(pos.h);
+		this.h = pos.h;
+	}
+}
+
+var lastTouch = null;
+
+Todo.prototype.touchstart = function(event) {
+	var todo = event.data.todo;
+	if(todo) {
+		var e = event.originalEvent || event;
+		if(e.touches.length == 1) {
+			if(lastTouch && (new Date().getTime() - lastTouch) < 500) {
+				lastTouch = null;
+				todo.rename();
+				return;
+			} else {
+				lastTouch = new Date().getTime();
+			}
+		}
+
+		event.preventDefault();
+		todo.dragging = {
+			x: e.touches[0].pageX - todo.x,
+			y: e.touches[0].pageY - todo.y
+		}
+		todo.elem.addClass('dragged');
+		$('.top').removeClass('top');
+		todo.elem.addClass('top');
+	}
+}
+
+Todo.prototype.touchend = function(event) {
+	var todo = event.data.todo;
+	if(todo) {
+		var e = event.originalEvent || event;
+		var target = event.target;
+		todo.elem.removeClass('dragged');
+		
+		var bodyW = $('body').width();
+		var bodyH = $('body').height();
+		delete todo['dragging'];
+		
+		var bounds = {
+			x: Math.min(bodyW-todo.w,Math.max(0,todo.x)),
+			y: Math.min(bodyH-todo.h,Math.max(0,todo.y))
+		};
+
+		todo.position(bounds, true);
+		// Save position
+		TodoMgr.save();
+	}
+}
+
+Todo.prototype.touchmove = function(event) {
+	var todo = event.data.todo;
+	if(todo) {
+		var e = event.originalEvent || event;
+		if(e.touches.length == 1) {
+			event.preventDefault();
+			var curX = e.targetTouches[0].pageX - todo.dragging.x;
+			var curY = e.targetTouches[0].pageY - todo.dragging.y;
+			todo.position({x:curX, y:curY});
+		}
+	}
+}
+
+Todo.prototype.gesturestart = function(event) {
+	var todo = event.data.todo;
+	if(todo) {
+		event.preventDefault();
+		todo.scaling = {
+			w: todo.w,
+			h: todo.h
+		}
+	}
+}
+
+Todo.prototype.gesturechange = function(event) {
+	var todo = event.data.todo;
+	if(todo) {
+		var e = event.originalEvent || event;
+		todo.position({
+			w: todo.scaling.w*e.scale,
+			h: todo.scaling.h*e.scale
+		});
+	}
+}
+
+Todo.prototype.gestureend = function(event) {
+	// Save position
+	var todo = event.data.todo;
+	if(todo) {
+		delete todo['scaling'];
+	}
+	TodoMgr.save();
+}
+
+Todo.prototype.rename = function() {
+	var newName = prompt("Edit Note", this.note);
+	if(newName) {
+		this.note = newName;
+		this.elem.children('.text').text(newName);
+	}
+	TodoMgr.save();
+}
+
+function resize() {
+	$('body').width(window.innerWidth).height(window.innerHeight);
+}
+
+function cancelTouch(event) {
+	event.originalEvent.preventDefault();
+}
+
+</script>
+<style>
+* {
+	font-size: 20px;
+	font-family: "HelveticaNeue-Light", "Helvetica Neue Light",
+	             "Helvetica Neue", sans-serif;
+	font-weight: 300;
+	color: #333;
+}
+
+body {
+	margin: 0;
+	height: 100%;
+	width: 100%;
+	position: relative;
+	overflow: hidden;
+}
+
+.top {
+	z-index: 2;
+}
+
+#add {
+	position: absolute;
+	bottom: 0px;
+	right: 0px;
+	margin: 0 10px 10px 0;
+}
+
+.views {
+	width: 100%;
+	background: #FFCC00;
+	position: absolute;
+	bottom: 25px;
+	top: 35px;
+	display: block;
+}
+
+.list {
+}
+
+.todo {
+	width: 100px;
+	height: 100px;
+	background: -webkit-gradient(
+	    linear,
+	    left bottom,
+	    left top,
+	    color-stop(0.27, rgb(230,230,230)),
+	    color-stop(0.88, rgb(245,245,245))
+	);
+	position: absolute;
+	-webkit-box-shadow: 1px 1px 1px #CCC;
+	opacity: 0.8;
+}
+
+.todo .text {
+	margin: 10px;
+}
+
+.dragged {
+	-webkit-box-shadow: 5px 5px 5px #CCC;
+	opacity: 0.6;
+}
+
+</style>
+</head>
+<body>
+	<div id="list" class="list">
+	</div>
+	<div id="add">Add Todo</div>
+</body>
+</html>
